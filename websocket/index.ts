@@ -1,53 +1,74 @@
 import express from "express";
 import http from "http";
 import WebSocket, { WebSocketServer } from "ws";
+import { createClient } from "redis";
 
-const app = express();
+async function main() {
+  const app = express();
+  app.use(express.json());
 
-app.get("/health", (_, res) => {
-  res.send("OK");
-});
+  app.get("/health", (_, res) => {
+    res.send("OK");
+  });
 
-const server = http.createServer(app);
+  const server = http.createServer(app);
 
-const users: Map<string, WebSocket> = new Map();
+  const users: Map<string, WebSocket> = new Map();
 
-const wss = new WebSocketServer({
-  server,
-  path: "/ws",
-});
+  // Separate clients: one for subscribing, one for publishing
+  const redisSubscriber = createClient();
+  const redisPublisher = createClient();
 
-wss.on("connection", (ws) => {
-  console.log("WebSocket client connected");
+  await redisSubscriber.connect();
+  await redisPublisher.connect();
 
-  ws.on("message", (message, isBinary) => {
-    console.log("Received:", message.toString());
-    const msg = JSON.parse(message.toString());
-    const userId = msg.userId;
+  const wss = new WebSocketServer({
+    server,
+    path: "/ws",
+  });
 
-    if (!users.has(userId)) {
-      users.set(userId, ws);
-      console.log(`User is connected with ID ${userId}`);
-      ws.send(JSON.stringify({ status: "connected", userId }));
-    }
+  wss.on("connection", (ws) => {
+    console.log("WebSocket client connected");
 
-    users.forEach((value, key) => {
-      const currUser = parseInt(key, 10);
-      // broadcast evenId users only
-      if (currUser % 2 == 0) {
-        if (value.readyState === WebSocket.OPEN) {
-          value.send(message, { binary: isBinary });
-        }
+    ws.on("message", async (message, isBinary) => {
+      console.log("Received:", message.toString());
+      const msg = JSON.parse(message.toString());
+      const userId = msg.userId;
+      // const { userId } = msg;
+
+      if (!users.has(userId)) {
+        users.set(userId, ws);
+        console.log(`User is connected with ID ${userId}`);
+        ws.send(JSON.stringify({ status: "connected", userId }));
+
+        // subscribe to redis channel
+        const userChannel = `user:${userId}`;
+        await redisSubscriber.subscribe(userChannel, (event: string) => {
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(event);
+          }
+        });
       }
+    });
+
+    ws.on("close", () => {
+      console.log("Client disconnected");
     });
   });
 
-  ws.on("close", () => {
-    console.log("Client disconnected");
+  app.post("/publish-event", async (req, res) => {
+    const { userId, message } = req.body;
+    if (!userId || !message) {
+      return res.status(400).json({ error: "userId and message are required" });
+    }
+    await redisPublisher.publish(`user:${userId}`, message);
+    res.send("OK");
   });
-});
 
-const PORT = 3003;
-server.listen(PORT, () => {
-  console.log(`HTTP + WebSocket server running on port ${PORT}`);
-});
+  const PORT = 3003;
+  server.listen(PORT, () => {
+    console.log(`HTTP + WebSocket server running on port ${PORT}`);
+  });
+}
+
+main();
