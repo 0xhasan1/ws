@@ -10,6 +10,8 @@ app.get("/health", (_, res) => {
 
 const server = http.createServer(app);
 
+const users: Map<string, WebSocket> = new Map();
+
 const wss = new WebSocketServer({
   server,
   path: "/ws",
@@ -18,11 +20,26 @@ const wss = new WebSocketServer({
 wss.on("connection", (ws) => {
   console.log("WebSocket client connected");
 
-  ws.on("message", (message) => {
+  ws.on("message", (message, isBinary) => {
     console.log("Received:", message.toString());
     const msg = JSON.parse(message.toString());
+    const userId = msg.userId;
 
-    ws.send(`message received from client :: ${msg}`);
+    if (!users.has(userId)) {
+      users.set(userId, ws);
+      console.log(`User is connected with ID ${userId}`);
+      ws.send(JSON.stringify({ status: "connected", userId }));
+    }
+
+    users.forEach((value, key) => {
+      const currUser = parseInt(key, 10);
+      // broadcast evenId users only
+      if (currUser % 2 == 0) {
+        if (value.readyState === WebSocket.OPEN) {
+          value.send(message, { binary: isBinary });
+        }
+      }
+    });
   });
 
   ws.on("close", () => {
