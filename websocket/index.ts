@@ -42,7 +42,7 @@ async function main() {
         ws.send(JSON.stringify({ status: "connected", userId }));
 
         // subscribe to redis channel
-        const userChannel = `user:${userId}`;
+        const userChannel = "users";
         await redisSubscriber.subscribe(userChannel, (event: string) => {
           if (ws?.readyState === WebSocket.OPEN) {
             ws.send(event);
@@ -61,7 +61,7 @@ async function main() {
     if (!userId || !message) {
       return res.status(400).json({ error: "userId and message are required" });
     }
-    await redisPublisher.publish(`user:${userId}`, message);
+    await redisPublisher.publish(`users`, message);
     res.send("OK");
   });
 
